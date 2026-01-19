@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  vidinsight:
+    build: .
+    container_name: vidinsight
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./temp:/app/temp
+      - ./.env:/app/.env
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    networks:
+      - vidinsight_net
+
+networks:
+  vidinsight_net:
+    driver: bridge
