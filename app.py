@@ -458,15 +458,89 @@ def render_result(result):
     
     # 摘要部分
     st.markdown("### 📋 内容摘要")
+    
+    # 格式化摘要：将每个要点显示为单独一行
+    formatted_summary = summary
+    if summary:
+        # 尝试将摘要按常见分隔符分割成列表项
+        lines = []
+        for line in summary.split('\n'):
+            line = line.strip()
+            if line:
+                # 移除已有的列表标记
+                if line.startswith(('-', '•', '*', '·')):
+                    line = line[1:].strip()
+                if line.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')):
+                    line = line[2:].strip()
+                lines.append(f"• {line}")
+        formatted_summary = '<br>'.join(lines) if lines else summary
+    
     st.markdown(f"""
     <div class="summary-card">
-    {summary}
+    {formatted_summary}
     </div>
     """, unsafe_allow_html=True)
     
     # 思维导图部分
-    st.markdown("### 🧠 思维导图")
+    col_title, col_fullscreen = st.columns([6, 1])
+    with col_title:
+        st.markdown("### 🧠 思维导图")
+    with col_fullscreen:
+        # 全屏按钮 - 使用 session state 控制
+        if st.button("🔍 全屏", key=f"fullscreen_btn_{video_id}", help="全屏查看思维导图"):
+            st.session_state[f'mindmap_fullscreen_{video_id}'] = True
+            st.rerun()
+    
     st.caption("🖱️ 滚轮缩放 | 拖拽移动 | 点击节点展开/折叠")
+    
+    # 检查是否处于全屏模式
+    is_fullscreen = st.session_state.get(f'mindmap_fullscreen_{video_id}', False)
+    
+    if is_fullscreen and mindmap:
+        # 注入全屏样式 - 让 dialog 覆盖整个屏幕
+        st.markdown("""
+        <style>
+            /* 全屏 dialog 样式 */
+            div[data-testid="stModal"] > div {
+                width: 95vw !important;
+                max-width: 95vw !important;
+                height: 90vh !important;
+                max-height: 90vh !important;
+                padding: 0 !important;
+                margin: auto !important;
+                top: 5vh !important;
+                left: 2.5vw !important;
+                transform: none !important;
+            }
+            div[data-testid="stModal"] > div > div {
+                height: 100% !important;
+                max-height: 100% !important;
+                border-radius: 12px !important;
+            }
+            div[data-testid="stModal"] > div > div > div {
+                height: calc(90vh - 80px) !important;
+                overflow: auto !important;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # 全屏模式 - 使用 dialog
+        @st.dialog("🧠 思维导图 - 全屏模式", width="large")
+        def show_fullscreen_mindmap():
+            st.caption("🖱️ 滚轮缩放 | 拖拽移动 | 点击节点展开/折叠")
+            try:
+                # 使用更大的高度填满屏幕
+                markmap(mindmap, height=600)
+            except Exception as e:
+                st.warning(f"思维导图渲染失败: {e}")
+                st.code(mindmap, language="markdown")
+            if st.button("❌ 关闭全屏", type="primary", use_container_width=True):
+                st.session_state[f'mindmap_fullscreen_{video_id}'] = False
+                st.rerun()
+        
+        show_fullscreen_mindmap()
+        # 重置全屏状态（dialog 关闭后）
+        st.session_state[f'mindmap_fullscreen_{video_id}'] = False
     
     if mindmap:
         with st.container(border=True):
@@ -618,9 +692,30 @@ def main():
         if not video_id:
             st.error("无效的 B站视频链接")
             return
-            
-        # 1. 创建占位历史记录
+        
+        # 检查该视频是否已有历史记录
         history_manager = st.session_state.history_manager
+        existing_record = history_manager.get_record_by_video_id(video_id)
+        
+        # 检查是否正在处理中
+        if video_id in st.session_state.processing_tasks:
+            st.toast("⏳ 该视频正在分析中，请稍候...", icon="⏳")
+            st.session_state.current_result = existing_record if existing_record else {'video_id': video_id}
+            st.rerun()
+            return
+        
+        # 只要已有记录就不重新分析，直接展示
+        if existing_record:
+            st.session_state.current_result = existing_record
+            st.session_state.history_list = history_manager.get_all_records()
+            if existing_record.get('status') == 'completed':
+                st.toast("📚 该视频已有分析记录，正在展示之前的结果", icon="📚")
+            else:
+                st.toast("⚠️ 该视频存在未完成的记录，如需重新分析请先删除", icon="⚠️")
+            st.rerun()
+            return
+            
+        # 1. 创建占位历史记录（仅当不存在现有记录时）
         placeholder_record = {
             'video_id': video_id,
             'title': '正在分析中...',
