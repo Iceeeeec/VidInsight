@@ -123,7 +123,8 @@ class LLMProcessor:
                     {"role": "user", "content": user_message}
                 ],
                 temperature=0.7,
-                max_tokens=8000  # 增加到 8000 以支持更长的视频内容分析
+                max_tokens=8000,  # 增加到 8000 以支持更长的视频内容分析
+                timeout=None  # 禁用超时限制
             )
             
             raw_response = response.choices[0].message.content

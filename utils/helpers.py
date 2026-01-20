@@ -42,29 +42,74 @@ def sanitize_filename(filename: str) -> str:
     return sanitized[:200] if len(sanitized) > 200 else sanitized
 
 
-def extract_video_id(url: str) -> str:
+def extract_video_info(url: str) -> dict:
     """
-    从B站链接中提取视频 BV 号
+    从B站链接中提取视频完整信息
     
     Args:
         url: B站视频链接
         
     Returns:
-        str: BV 号，如 BV1xx411c7mD
+        dict: {
+            'video_id': 包含分P的完整ID，如 'BV1VE411q7dX_p11'
+            'bv_id': 纯BV号，用于分组，如 'BV1VE411q7dX'
+            'part': 分P号（整数），无则为 None
+        }
     """
+    import urllib.parse
+    
+    result = {
+        'video_id': None,
+        'bv_id': None,
+        'part': None
+    }
+    
     # 匹配 BV 号
     bv_pattern = r'(BV[a-zA-Z0-9]+)'
     match = re.search(bv_pattern, url)
     if match:
-        return match.group(1)
+        result['bv_id'] = match.group(1)
+    else:
+        # 匹配 AV 号
+        av_pattern = r'av(\d+)'
+        match = re.search(av_pattern, url, re.IGNORECASE)
+        if match:
+            result['bv_id'] = f"av{match.group(1)}"
     
-    # 匹配 AV 号
-    av_pattern = r'av(\d+)'
-    match = re.search(av_pattern, url, re.IGNORECASE)
-    if match:
-        return f"av{match.group(1)}"
+    if not result['bv_id']:
+        return result
     
-    return None
+    # 提取分P号
+    try:
+        parsed = urllib.parse.urlparse(url)
+        query_params = urllib.parse.parse_qs(parsed.query)
+        if 'p' in query_params:
+            part = int(query_params['p'][0])
+            result['part'] = part
+    except (ValueError, KeyError, IndexError):
+        pass
+    
+    # 生成完整 video_id
+    if result['part'] is not None:
+        result['video_id'] = f"{result['bv_id']}_p{result['part']}"
+    else:
+        result['video_id'] = result['bv_id']
+    
+    return result
+
+
+def extract_video_id(url: str) -> str:
+    """
+    从B站链接中提取视频 ID（包含分P信息）
+    
+    Args:
+        url: B站视频链接
+        
+    Returns:
+        str: 视频ID，如 'BV1VE411q7dX' 或 'BV1VE411q7dX_p11'
+    """
+    info = extract_video_info(url)
+    return info.get('video_id')
 
 
 def truncate_text(text: str, max_tokens: int = 8000) -> str:

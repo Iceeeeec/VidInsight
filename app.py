@@ -316,46 +316,58 @@ def render_sidebar():
         # 3. 历史记录列表
         st.markdown('<div class="sidebar-section-header">历史记录</div>', unsafe_allow_html=True)
         
-        if not records:
+        # 获取分组后的历史记录
+        grouped_history = history_manager.get_grouped_history()
+        folders = grouped_history.get('folders', [])
+        ungrouped = grouped_history.get('ungrouped', [])
+        
+        total_count = len(records)
+        
+        if total_count == 0:
             st.info("暂无记录")
         else:
             # 搜索框
             search_term = st.text_input("🔍 搜索", placeholder="输入标题关键词...", label_visibility="collapsed")
             
-            filtered_records = records
-            if search_term:
-                filtered_records = [r for r in records if search_term.lower() in r.get('title', '').lower()]
+            st.caption(f"共 {total_count} 条记录，{len(folders)} 个分组")
             
-            st.caption(f"共 {len(filtered_records)} 条记录")
-            
-            # 列表显示
-            for i, record in enumerate(filtered_records):
+            # 辅助函数：渲染单条记录
+            def render_record_item(record, indent=False, show_part=False):
                 video_id = record.get('video_id', '')
                 title = record.get('title', '未知标题')
+                part = record.get('part')
+                
+                # 搜索过滤
+                if search_term and search_term.lower() not in title.lower():
+                    return False
                 
                 # 使用两列布局：标题（点击加载） + 删除按钮
                 col_title, col_del = st.columns([5, 1])
                 
                 with col_title:
-                    display_title = title[:16] + "..." if len(title) > 16 else title
+                    # 显示分P信息
+                    # show_part=True 时强制显示分P号（在分组内）
+                    if show_part or part:
+                        part_num = part if part else 1
+                        display_title = f"P{part_num}: {title[:10]}..." if len(title) > 10 else f"P{part_num}: {title}"
+                    else:
+                        display_title = title[:16] + "..." if len(title) > 16 else title
+                    
                     # 高亮当前选中的记录
                     is_active = st.session_state.current_result and st.session_state.current_result.get('video_id') == video_id
                     
-                    # 选中状态：灰色按钮(secondary) + 特殊图标
-                    # 未选中：灰色按钮(secondary) + 无图标
                     if is_active:
-                        btn_type = "secondary"
+                        btn_type = "primary"  # 选中状态用高亮色
                         label = f"👉 {display_title}"
                     elif video_id in st.session_state.get('processing_tasks', {}):
                         btn_type = "secondary"
                         label = f"⏳ {display_title}"
                     else:
                         btn_type = "secondary"
-                        label = display_title
+                        label = f"{'   ' if indent else ''}{display_title}"
                     
                     if st.button(label, key=f"hist_btn_{video_id}", type=btn_type, use_container_width=True, help=title):
                         st.session_state.current_result = record
-                        # 注入 JS 滚动到顶部
                         st.components.v1.html(
                             """
                             <script>
@@ -370,10 +382,84 @@ def render_sidebar():
                 with col_del:
                     if st.button("🗑️", key=f"del_btn_{video_id}", help="删除此记录"):
                         history_manager.delete_record(video_id)
-                        # 如果删除的是当前显示的记录，清除显示
                         if st.session_state.current_result and st.session_state.current_result.get('video_id') == video_id:
                             st.session_state.current_result = None
                         st.rerun()
+                
+                return True
+            
+            # 渲染分组（包）
+            for folder in folders:
+                folder_id = folder.get('id')
+                folder_name = folder.get('name', '未命名分组')
+                folder_records = folder.get('records', [])
+                
+                # 过滤搜索结果
+                if search_term:
+                    folder_records = [r for r in folder_records if search_term.lower() in r.get('title', '').lower()]
+                    if not folder_records:
+                        continue
+                
+                # 检查当前选中的记录是否在此分组内
+                current_video_id = st.session_state.current_result.get('video_id') if st.session_state.current_result else None
+                is_current_in_folder = any(r.get('video_id') == current_video_id for r in folder_records)
+                
+                # 使用 expander 显示包（当前选中记录所在分组自动展开）
+                with st.expander(f"{folder_name} ({len(folder_records)})", expanded=is_current_in_folder):
+                    # 包操作按钮：重命名和删除
+                    # 检查是否正在编辑此分组名称
+                    editing_key = f"editing_folder_{folder_id}"
+                    if st.session_state.get(editing_key, False):
+                        # 显示重命名输入框
+                        new_name = st.text_input(
+                            "新名称", 
+                            value=folder_name.replace("📁 ", ""),
+                            key=f"rename_input_{folder_id}",
+                            max_chars=30
+                        )
+                        col_save, col_cancel = st.columns(2)
+                        with col_save:
+                            if st.button("✅ 保存", key=f"save_rename_{folder_id}", use_container_width=True):
+                                if new_name.strip():
+                                    history_manager.rename_folder(folder_id, f"📁 {new_name.strip()}")
+                                    st.session_state[editing_key] = False
+                                    st.rerun()
+                        with col_cancel:
+                            if st.button("❌ 取消", key=f"cancel_rename_{folder_id}", use_container_width=True):
+                                st.session_state[editing_key] = False
+                                st.rerun()
+                    else:
+                        # 显示操作按钮
+                        col_rename, col_del_folder = st.columns([1, 1])
+                        with col_rename:
+                            if st.button("✏️ 重命名", key=f"rename_folder_{folder_id}", use_container_width=True):
+                                st.session_state[editing_key] = True
+                                st.rerun()
+                        with col_del_folder:
+                            if st.button("🗑️ 删除", key=f"del_folder_{folder_id}", use_container_width=True):
+                                history_manager.delete_folder(folder_id, delete_records=False)
+                                st.rerun()
+                    
+                    # 渲染包内记录（按P号排序）
+                    # 按分P号排序，无分P的放最前面
+                    sorted_records = sorted(folder_records, key=lambda r: r.get('part') or 0)
+                    for record in sorted_records:
+                        render_record_item(record, indent=True, show_part=True)
+            
+            # 渲染未分组的记录
+            if ungrouped:
+                # 过滤搜索结果
+                filtered_ungrouped = ungrouped
+                if search_term:
+                    filtered_ungrouped = [r for r in ungrouped if search_term.lower() in r.get('title', '').lower()]
+                
+                if filtered_ungrouped:
+                    if folders:
+                        st.markdown("---")
+                        st.caption("📄 未分组")
+                    
+                    for record in filtered_ungrouped:
+                        render_record_item(record)
 
 
 def render_input_section():
@@ -381,24 +467,63 @@ def render_input_section():
     渲染输入区域
     
     Returns:
-        tuple: (url, submit_clicked)
+        tuple: (url, submit_clicked, batch_urls, batch_submit)
     """
     col1, col2, col3 = st.columns([1, 4, 1])
     
     with col2:
-        url = st.text_input(
-            "🔗 输入B站视频链接",
-            placeholder="https://www.bilibili.com/video/BVxxxxxxx",
-            help="支持 BV 号或完整链接"
-        )
+        # 使用标签页区分单个分析和批量分析
+        tab_single, tab_batch = st.tabs(["📺 单个视频", "📚 批量分析"])
         
-        submit = st.button(
-            "🚀 开始分析",
-            type="primary",
-            use_container_width=True
-        )
+        with tab_single:
+            url = st.text_input(
+                "🔗 输入B站视频链接",
+                placeholder="https://www.bilibili.com/video/BVxxxxxxx",
+                help="支持 BV 号或完整链接",
+                key="single_url"
+            )
+            
+            submit = st.button(
+                "🚀 开始分析",
+                type="primary",
+                use_container_width=True,
+                key="single_submit"
+            )
+        
+        with tab_batch:
+            st.caption("💡 输入BV号和分P数量，自动分析整个合集")
+            
+            batch_url = st.text_input(
+                "🔗 视频链接或BV号",
+                placeholder="https://www.bilibili.com/video/BVxxxxxxx 或 BVxxxxxxx",
+                help="输入合集中任意一个视频的链接或BV号",
+                key="batch_url"
+            )
+            
+            col_start, col_end = st.columns(2)
+            with col_start:
+                start_p = st.number_input("起始分P", min_value=1, value=1, key="batch_start_p")
+            with col_end:
+                end_p = st.number_input("结束分P", min_value=1, value=10, key="batch_end_p")
+            
+            batch_submit = st.button(
+                "🚀 批量分析全部",
+                type="primary",
+                use_container_width=True,
+                key="batch_submit"
+            )
+            
+            # 计算批量URL列表
+            batch_urls = []
+            if batch_submit and batch_url:
+                # 提取BV号
+                video_info = extract_video_info(batch_url)
+                bv_id = video_info.get('bv_id')
+                if bv_id and end_p >= start_p:
+                    for p in range(int(start_p), int(end_p) + 1):
+                        batch_urls.append(f"https://www.bilibili.com/video/{bv_id}?p={p}")
     
-    return url, submit
+    return url, submit, batch_urls, batch_submit
 
 
 def render_progress(status: ProcessingStatus, message: str, progress: int = 0):
@@ -606,7 +731,7 @@ def render_result(result):
 
 import threading
 import time
-from utils.helpers import extract_video_id
+from utils.helpers import extract_video_id, extract_video_info
 
 # 全局任务追踪 (video_id -> {status, message, progress})
 if 'processing_tasks' not in st.session_state:
@@ -632,11 +757,16 @@ def background_process(url: str, video_id: str, username: str, task_tracker: dic
         # 执行处理
         result = processor.process(url)
         
+        # 从URL中提取视频信息
+        video_info = extract_video_info(url)
+        
         # 保存完整结果到历史记录
         history_manager = HistoryManager(username)
         
         record = {
             'video_id': result.video_id,
+            'bv_id': video_info.get('bv_id'),
+            'part': video_info.get('part'),
             'title': result.title,
             'duration': result.duration,
             'has_subtitle': result.has_subtitle,
@@ -684,11 +814,93 @@ def main():
     render_sidebar()
     
     # 输入区
-    url, submit = render_input_section()
+    url, submit, batch_urls, batch_submit = render_input_section()
     
-    # 处理逻辑
+    # 辅助函数：启动单个视频的分析任务
+    def start_analysis(video_url):
+        """启动单个视频分析任务，返回占位记录"""
+        video_info = extract_video_info(video_url)
+        video_id = video_info.get('video_id')
+        bv_id = video_info.get('bv_id')
+        part = video_info.get('part')
+        
+        if not video_id:
+            return None
+        
+        history_manager = st.session_state.history_manager
+        existing_record = history_manager.get_record_by_video_id(video_id)
+        
+        # 如果正在处理或已完成，跳过
+        if video_id in st.session_state.processing_tasks:
+            return None
+        if existing_record:
+            return None
+        
+        # 创建占位记录
+        placeholder_record = {
+            'video_id': video_id,
+            'bv_id': bv_id,
+            'part': part,
+            'title': f'正在分析中... (P{part})' if part else '正在分析中...',
+            'status': 'processing',
+            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        history_manager.add_record(placeholder_record)
+        
+        # 初始化任务状态
+        st.session_state.processing_tasks[video_id] = {
+            'status': ProcessingStatus.DOWNLOADING,
+            'message': '准备开始...',
+            'progress': 0
+        }
+        
+        # 启动后台线程
+        thread = threading.Thread(
+            target=background_process,
+            args=(video_url, video_id, st.session_state.username, st.session_state.processing_tasks)
+        )
+        thread.start()
+        
+        return placeholder_record
+    
+    # 批量分析处理
+    if batch_submit and batch_urls:
+        started_count = 0
+        skipped_count = 0
+        first_record = None
+        
+        for video_url in batch_urls:
+            record = start_analysis(video_url)
+            if record:
+                started_count += 1
+                if first_record is None:
+                    first_record = record
+            else:
+                skipped_count += 1
+        
+        if started_count > 0:
+            st.toast(f"🚀 已启动 {started_count} 个视频的分析任务", icon="🚀")
+            if skipped_count > 0:
+                st.toast(f"⏭️ 跳过 {skipped_count} 个已存在的记录", icon="⏭️")
+            
+            # 设置当前查看的记录
+            st.session_state.current_result = first_record
+            st.session_state.history_list = st.session_state.history_manager.get_all_records()
+            st.rerun()
+        elif batch_urls:
+            st.toast("📚 所有视频都已有分析记录", icon="📚")
+    
+    elif batch_submit and not batch_urls:
+        st.warning("⚠️ 请输入有效的视频链接和分P范围")
+    
+    # 单个视频分析处理
     if submit and url:
-        video_id = extract_video_id(url)
+        # 使用 extract_video_info 获取完整信息
+        video_info = extract_video_info(url)
+        video_id = video_info.get('video_id')
+        bv_id = video_info.get('bv_id')
+        part = video_info.get('part')
+        
         if not video_id:
             st.error("无效的 B站视频链接")
             return
@@ -716,9 +928,12 @@ def main():
             return
             
         # 1. 创建占位历史记录（仅当不存在现有记录时）
+        # 包含 bv_id 和 part 信息以支持自动分组
         placeholder_record = {
             'video_id': video_id,
-            'title': '正在分析中...',
+            'bv_id': bv_id,
+            'part': part,
+            'title': f'正在分析中... (P{part})' if part else '正在分析中...',
             'status': 'processing',
             'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
