@@ -24,8 +24,15 @@ class Config:
     LLM_API_BASE: str = os.getenv('LLM_API_BASE', 'https://jeniya.top/v1')
     LLM_MODEL: str = os.getenv('LLM_MODEL', 'gemini-2.5-flash')
     
-    # Whisper API 配置（远程服务）
+    # Whisper API 配置（本地服务）
     WHISPER_API_URL: str = os.getenv('WHISPER_API_URL', 'http://149.88.94.184:8000')
+    
+    # 远程 Whisper API 配置 (OpenAI 兼容格式)
+    REMOTE_WHISPER_API_URL: str = os.getenv('REMOTE_WHISPER_API_URL', 'http://jeniya.top/v1/audio/transcriptions')
+    REMOTE_WHISPER_API_KEY: str = os.getenv('REMOTE_WHISPER_API_KEY', '')
+    
+    # 默认转录模式: 'local' 或 'remote'
+    TRANSCRIBE_MODE: str = os.getenv('TRANSCRIBE_MODE', 'local')
     
     # 临时文件目录
     TEMP_DIR: Path = Path(os.getenv('TEMP_DIR', './temp'))

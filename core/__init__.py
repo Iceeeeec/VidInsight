@@ -6,13 +6,14 @@
 """
 
 from .downloader import BilibiliDownloader
-from .transcriber import WhisperTranscriber
+from .transcriber import WhisperTranscriber, RemoteWhisperTranscriber
 from .llm_processor import LLMProcessor
 from .video_processor import VideoProcessor, ProcessingStatus
 
 __all__ = [
     'BilibiliDownloader',
-    'WhisperTranscriber', 
+    'WhisperTranscriber',
+    'RemoteWhisperTranscriber',
     'LLMProcessor',
     'VideoProcessor',
     'ProcessingStatus'

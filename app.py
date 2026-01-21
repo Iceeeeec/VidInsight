@@ -256,7 +256,28 @@ def render_sidebar():
                 else:
                     st.error(msg)
 
-        # 2. 数据管理
+        # 2. 转录模式切换
+        st.markdown('<div class="sidebar-section-header">转录设置</div>', unsafe_allow_html=True)
+        
+        # 初始化转录模式 session state
+        if 'transcribe_mode' not in st.session_state:
+            st.session_state.transcribe_mode = 'local'
+        
+        transcribe_mode = st.radio(
+            "🎤 语音转录模式",
+            options=['local', 'remote'],
+            format_func=lambda x: '🖥️ 服务器 自建 Whisper（慢）' if x == 'local' else '☁️ 远程 API（快）',
+            key='transcribe_mode_radio',
+            index=0 if st.session_state.transcribe_mode == 'local' else 1,
+            horizontal=True,
+            help='本地模式使用自建 Whisper 服务，远程模式使用 OpenAI 兼容 API'
+        )
+        
+        # 更新 session state
+        if transcribe_mode != st.session_state.transcribe_mode:
+            st.session_state.transcribe_mode = transcribe_mode
+        
+        # 3. 数据管理
         st.markdown('<div class="sidebar-section-header">数据管理</div>', unsafe_allow_html=True)
         
         # 刷新历史记录
@@ -737,12 +758,19 @@ from utils.helpers import extract_video_id, extract_video_info
 if 'processing_tasks' not in st.session_state:
     st.session_state.processing_tasks = {}
 
-def background_process(url: str, video_id: str, username: str, task_tracker: dict):
+def background_process(url: str, video_id: str, username: str, task_tracker: dict, transcribe_mode: str = 'local'):
     """
     后台处理任务
+    
+    Args:
+        url: 视频链接
+        video_id: 视频 ID
+        username: 用户名
+        task_tracker: 任务追踪字典
+        transcribe_mode: 转录模式，'local' 或 'remote'
     """
     try:
-        processor = VideoProcessor()
+        processor = VideoProcessor(transcribe_mode=transcribe_mode)
         
         def on_status_change(status: ProcessingStatus, message: str, progress: int = 0):
             # 更新任务状态
@@ -857,7 +885,7 @@ def main():
         # 启动后台线程
         thread = threading.Thread(
             target=background_process,
-            args=(video_url, video_id, st.session_state.username, st.session_state.processing_tasks)
+            args=(video_url, video_id, st.session_state.username, st.session_state.processing_tasks, st.session_state.transcribe_mode)
         )
         thread.start()
         
@@ -949,7 +977,7 @@ def main():
         # 3. 启动后台线程
         thread = threading.Thread(
             target=background_process,
-            args=(url, video_id, st.session_state.username, st.session_state.processing_tasks)
+            args=(url, video_id, st.session_state.username, st.session_state.processing_tasks, st.session_state.transcribe_mode)
         )
         thread.start()
         

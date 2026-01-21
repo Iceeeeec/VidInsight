@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .downloader import BilibiliDownloader, DownloadResult
-from .transcriber import WhisperTranscriber
+from .transcriber import WhisperTranscriber, RemoteWhisperTranscriber
+from config import Config
 from .llm_processor import LLMProcessor, AnalysisResult
 
 
@@ -52,19 +53,31 @@ class VideoProcessor:
     def __init__(
         self,
         downloader: Optional[BilibiliDownloader] = None,
-        transcriber: Optional[WhisperTranscriber] = None,
-        llm_processor: Optional[LLMProcessor] = None
+        transcriber = None,
+        llm_processor: Optional[LLMProcessor] = None,
+        transcribe_mode: str = None
     ):
         """
         初始化处理器
         
         Args:
             downloader: 下载器实例，默认新建
-            transcriber: 转录器实例，默认新建
+            transcriber: 转录器实例，默认根据模式新建
             llm_processor: LLM 处理器实例，默认新建
+            transcribe_mode: 转录模式，'local' 或 'remote'，默认从配置读取
         """
         self.downloader = downloader or BilibiliDownloader()
-        self.transcriber = transcriber or WhisperTranscriber()
+        
+        # 根据模式选择转录器
+        if transcriber:
+            self.transcriber = transcriber
+        else:
+            mode = transcribe_mode or Config.TRANSCRIBE_MODE
+            if mode == 'remote':
+                self.transcriber = RemoteWhisperTranscriber()
+            else:
+                self.transcriber = WhisperTranscriber()
+        
         self.llm_processor = llm_processor  # 延迟初始化
         
         self.status = ProcessingStatus.IDLE
