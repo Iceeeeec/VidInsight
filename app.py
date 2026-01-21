@@ -17,6 +17,7 @@ from utils.history import HistoryManager
 
 
 from utils.user_manager import user_manager
+from utils.api_key_manager import api_key_manager
 
 from streamlit_cookies_manager import CookieManager
 
@@ -243,6 +244,9 @@ def render_sidebar():
                 st.session_state.history_manager = None
                 st.session_state.current_result = None
                 st.session_state.history_list = []
+                # 清空密钥缓存，下次登录需重新输入
+                st.session_state.user_api_key = ''
+                st.session_state.api_key_valid = False
                 st.rerun()
         
         # 账户设置 (折叠)
@@ -276,6 +280,133 @@ def render_sidebar():
         # 更新 session state
         if transcribe_mode != st.session_state.transcribe_mode:
             st.session_state.transcribe_mode = transcribe_mode
+        
+        # 远程 API 密钥输入（当选择远程模式时显示）
+        if transcribe_mode == 'remote':
+            # 初始化密钥 session state
+            if 'user_api_key' not in st.session_state:
+                st.session_state.user_api_key = ''
+            if 'api_key_valid' not in st.session_state:
+                st.session_state.api_key_valid = False
+            
+            st.markdown("---")
+            st.caption("🔑 使用远程 API 需要输入密钥")
+            
+            col_key, col_btn = st.columns([3, 1])
+            with col_key:
+                user_key = st.text_input(
+                    "API 密钥",
+                    value=st.session_state.user_api_key,
+                    placeholder="VID-XXXX-XXXX-XXXX",
+                    type="password",
+                    label_visibility="collapsed",
+                    key="user_api_key_input"
+                )
+            with col_btn:
+                if st.button("验证", use_container_width=True, key="verify_key_btn"):
+                    result = api_key_manager.validate_key(user_key, st.session_state.username)
+                    if result['valid']:
+                        st.session_state.user_api_key = user_key
+                        st.session_state.api_key_valid = True
+                        st.toast("✅ 密钥验证成功！", icon="✅")
+                    else:
+                        st.session_state.api_key_valid = False
+                        st.toast(f"❌ {result['message']}", icon="❌")
+            
+            # 显示密钥状态
+            if st.session_state.api_key_valid and st.session_state.user_api_key:
+                result = api_key_manager.validate_key(st.session_state.user_api_key, st.session_state.username)
+                if result['valid'] and result['key_info']:
+                    expires_at = result['key_info'].get('expires_at', '永久')
+                    st.success(f"✅ 密钥有效，到期: {expires_at if expires_at else '永久'}")
+                else:
+                    st.session_state.api_key_valid = False
+                    st.warning(f"⚠️ {result['message']}")
+            elif user_key and not st.session_state.api_key_valid:
+                st.warning("⚠️ 请点击验证按钮验证密钥")
+        
+        # 管理员密钥管理面板
+        if user_manager.is_admin(st.session_state.username):
+            st.markdown("---")
+            with st.expander("🔑 密钥管理 (管理员)", expanded=False):
+                # 创建新密钥
+                st.markdown("**➕ 创建新密钥**")
+                col_days, col_btn = st.columns([2, 1])
+                with col_days:
+                    expires_days = st.selectbox(
+                        "有效期",
+                        options=[7, 30, 90, 365, None],
+                        format_func=lambda x: f"{x}天" if x else "永久",
+                        index=1,
+                        label_visibility="collapsed",
+                        key="new_key_expires"
+                    )
+                with col_btn:
+                    create_clicked = st.button("🆕 创建", use_container_width=True, key="create_key_btn")
+                
+                if create_clicked:
+                    # 自动生成名称（使用时间戳）
+                    auto_name = datetime.now().strftime("%m%d_%H%M")
+                    new_key_info = api_key_manager.create_key(auto_name, expires_days)
+                    st.session_state.last_created_key = new_key_info['key']
+                    st.toast("✅ 密钥已创建！", icon="🔑")
+                    st.rerun()
+                
+                # 显示最近创建的密钥（带复制功能）
+                if 'last_created_key' in st.session_state and st.session_state.last_created_key:
+                    st.success("✅ 新密钥（点击复制）:")
+                    st.code(st.session_state.last_created_key, language=None)
+                    if st.button("清除显示", key="clear_new_key"):
+                        st.session_state.last_created_key = None
+                        st.rerun()
+                
+                # 密钥列表
+                st.markdown("---")
+                st.markdown("**📋 密钥列表**")
+                all_keys = api_key_manager.get_all_keys()
+                
+                if not all_keys:
+                    st.info("暂无密钥")
+                else:
+                    for key_info in all_keys:
+                        key = key_info.get('key', '')
+                        name = key_info.get('name', '')
+                        enabled = key_info.get('enabled', True)
+                        is_expired = key_info.get('is_expired', False)
+                        expires_at = key_info.get('expires_at')
+                        used_by = key_info.get('used_by', [])
+                        usage_count = len(used_by)
+                        
+                        # 状态图标
+                        if is_expired:
+                            status_icon = "⏰"
+                        elif not enabled:
+                            status_icon = "🔒"
+                        elif usage_count >= 2:
+                            status_icon = "🈵"  # 已满
+                        else:
+                            status_icon = "✅"
+                        
+                        # 容器包裹每个密钥项
+                        with st.container(border=True):
+                            # 第一行：状态和过期时间
+                            users_str = ", ".join(used_by) if used_by else "暂无用户"
+                            st.caption(f"{status_icon} 创建于 {name} | 用户: {users_str} ({usage_count}/2) | 到期: {expires_at if expires_at else '永久'}")
+                            
+                            # 第二行：完整密钥（可复制）
+                            st.code(key, language=None)
+                            
+                            # 第三行：操作按钮
+                            col_toggle, col_del = st.columns(2)
+                            with col_toggle:
+                                btn_label = "🔓 启用" if not enabled else "🔒 禁用"
+                                if st.button(btn_label, key=f"toggle_{key}", use_container_width=True):
+                                    api_key_manager.toggle_key(key)
+                                    st.rerun()
+                            with col_del:
+                                if st.button("🗑️ 删除", key=f"del_{key}", use_container_width=True):
+                                    api_key_manager.delete_key(key)
+                                    st.rerun()
         
         # 3. 数据管理
         st.markdown('<div class="sidebar-section-header">数据管理</div>', unsafe_allow_html=True)
@@ -891,100 +1022,124 @@ def main():
         
         return placeholder_record
     
+    # 辅助函数：检查远程 API 密钥是否有效
+    def check_remote_api_key():
+        """检查远程 API 密钥是否有效，如果无效返回错误消息"""
+        if st.session_state.transcribe_mode != 'remote':
+            return True, ""
+        
+        user_key = st.session_state.get('user_api_key', '')
+        if not user_key:
+            return False, "使用远程 API 需要输入有效密钥，请在左侧边栏输入密钥"
+        
+        result = api_key_manager.validate_key(user_key, st.session_state.username)
+        if not result['valid']:
+            return False, f"密钥无效: {result['message']}"
+        
+        return True, ""
+    
     # 批量分析处理
     if batch_submit and batch_urls:
-        started_count = 0
-        skipped_count = 0
-        first_record = None
-        
-        for video_url in batch_urls:
-            record = start_analysis(video_url)
-            if record:
-                started_count += 1
-                if first_record is None:
-                    first_record = record
-            else:
-                skipped_count += 1
-        
-        if started_count > 0:
-            st.toast(f"🚀 已启动 {started_count} 个视频的分析任务", icon="🚀")
-            if skipped_count > 0:
-                st.toast(f"⏭️ 跳过 {skipped_count} 个已存在的记录", icon="⏭️")
+        # 检查远程 API 密钥
+        key_valid, key_error = check_remote_api_key()
+        if not key_valid:
+            st.error(f"⚠️ {key_error}")
+        else:
+            started_count = 0
+            skipped_count = 0
+            first_record = None
             
-            # 设置当前查看的记录
-            st.session_state.current_result = first_record
-            st.session_state.history_list = st.session_state.history_manager.get_all_records()
-            st.rerun()
-        elif batch_urls:
-            st.toast("📚 所有视频都已有分析记录", icon="📚")
+            for video_url in batch_urls:
+                record = start_analysis(video_url)
+                if record:
+                    started_count += 1
+                    if first_record is None:
+                        first_record = record
+                else:
+                    skipped_count += 1
+            
+            if started_count > 0:
+                st.toast(f"🚀 已启动 {started_count} 个视频的分析任务", icon="🚀")
+                if skipped_count > 0:
+                    st.toast(f"⏭️ 跳过 {skipped_count} 个已存在的记录", icon="⏭️")
+                
+                # 设置当前查看的记录
+                st.session_state.current_result = first_record
+                st.session_state.history_list = st.session_state.history_manager.get_all_records()
+                st.rerun()
+            elif batch_urls:
+                st.toast("📚 所有视频都已有分析记录", icon="📚")
     
     elif batch_submit and not batch_urls:
         st.warning("⚠️ 请输入有效的视频链接和分P范围")
     
     # 单个视频分析处理
     if submit and url:
-        # 使用 extract_video_info 获取完整信息
-        video_info = extract_video_info(url)
-        video_id = video_info.get('video_id')
-        bv_id = video_info.get('bv_id')
-        part = video_info.get('part')
-        
-        if not video_id:
-            st.error("无效的 B站视频链接")
-            return
-        
-        # 检查该视频是否已有历史记录
-        history_manager = st.session_state.history_manager
-        existing_record = history_manager.get_record_by_video_id(video_id)
-        
-        # 检查是否正在处理中
-        if video_id in st.session_state.processing_tasks:
-            st.toast("⏳ 该视频正在分析中，请稍候...", icon="⏳")
-            st.session_state.current_result = existing_record if existing_record else {'video_id': video_id}
-            st.rerun()
-            return
-        
-        # 只要已有记录就不重新分析，直接展示
-        if existing_record:
-            st.session_state.current_result = existing_record
-            st.session_state.history_list = history_manager.get_all_records()
-            if existing_record.get('status') == 'completed':
-                st.toast("📚 该视频已有分析记录，正在展示之前的结果", icon="📚")
-            else:
-                st.toast("⚠️ 该视频存在未完成的记录，如需重新分析请先删除", icon="⚠️")
-            st.rerun()
-            return
+        # 检查远程 API 密钥
+        key_valid, key_error = check_remote_api_key()
+        if not key_valid:
+            st.error(f"⚠️ {key_error}")
+        else:
+            # 使用 extract_video_info 获取完整信息
+            video_info = extract_video_info(url)
+            video_id = video_info.get('video_id')
+            bv_id = video_info.get('bv_id')
+            part = video_info.get('part')
             
-        # 1. 创建占位历史记录（仅当不存在现有记录时）
-        # 包含 bv_id 和 part 信息以支持自动分组
-        placeholder_record = {
-            'video_id': video_id,
-            'bv_id': bv_id,
-            'part': part,
-            'title': f'正在分析中... (P{part})' if part else '正在分析中...',
-            'status': 'processing',
-            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        history_manager.add_record(placeholder_record)
-        
-        # 2. 初始化任务状态
-        st.session_state.processing_tasks[video_id] = {
-            'status': ProcessingStatus.DOWNLOADING,
-            'message': '准备开始...',
-            'progress': 0
-        }
-        
-        # 3. 启动后台线程
-        thread = threading.Thread(
-            target=background_process,
-            args=(url, video_id, st.session_state.username, st.session_state.processing_tasks, st.session_state.transcribe_mode)
-        )
-        thread.start()
-        
-        # 4. 设置当前查看的记录并刷新
-        st.session_state.current_result = placeholder_record
-        st.session_state.history_list = history_manager.get_all_records()
-        st.rerun()
+            if not video_id:
+                st.error("无效的 B站视频链接")
+            else:
+                # 检查该视频是否已有历史记录
+                history_manager = st.session_state.history_manager
+                existing_record = history_manager.get_record_by_video_id(video_id)
+                
+                # 检查是否正在处理中
+                if video_id in st.session_state.processing_tasks:
+                    st.toast("⏳ 该视频正在分析中，请稍候...", icon="⏳")
+                    st.session_state.current_result = existing_record if existing_record else {'video_id': video_id}
+                    st.rerun()
+                
+                # 只要已有记录就不重新分析，直接展示
+                elif existing_record:
+                    st.session_state.current_result = existing_record
+                    st.session_state.history_list = history_manager.get_all_records()
+                    if existing_record.get('status') == 'completed':
+                        st.toast("📚 该视频已有分析记录，正在展示之前的结果", icon="📚")
+                    else:
+                        st.toast("⚠️ 该视频存在未完成的记录，如需重新分析请先删除", icon="⚠️")
+                    st.rerun()
+                
+                else:
+                    # 1. 创建占位历史记录（仅当不存在现有记录时）
+                    # 包含 bv_id 和 part 信息以支持自动分组
+                    placeholder_record = {
+                        'video_id': video_id,
+                        'bv_id': bv_id,
+                        'part': part,
+                        'title': f'正在分析中... (P{part})' if part else '正在分析中...',
+                        'status': 'processing',
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    history_manager.add_record(placeholder_record)
+                    
+                    # 2. 初始化任务状态
+                    st.session_state.processing_tasks[video_id] = {
+                        'status': ProcessingStatus.DOWNLOADING,
+                        'message': '准备开始...',
+                        'progress': 0
+                    }
+                    
+                    # 3. 启动后台线程
+                    thread = threading.Thread(
+                        target=background_process,
+                        args=(url, video_id, st.session_state.username, st.session_state.processing_tasks, st.session_state.transcribe_mode)
+                    )
+                    thread.start()
+                    
+                    # 4. 设置当前查看的记录并刷新
+                    st.session_state.current_result = placeholder_record
+                    st.session_state.history_list = history_manager.get_all_records()
+                    st.rerun()
     
     elif submit and not url:
         st.warning("⚠️ 请输入视频链接")

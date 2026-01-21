@@ -6,6 +6,7 @@
 """
 
 import json
+import os
 import re
 import hashlib
 from pathlib import Path
@@ -271,6 +272,23 @@ class UserManager:
             if 'token_expires_at' in users[username]:
                 del users[username]['token_expires_at']
             self._save_users(users)
+    
+    def is_admin(self, username: str) -> bool:
+        """
+        检查用户是否为管理员
+        
+        管理员用户名列表从环境变量 ADMIN_USERS 读取，
+        多个用户名用逗号分隔，例如: ADMIN_USERS=admin,zhoujunyu
+        
+        Args:
+            username: 用户名
+            
+        Returns:
+            bool: 是否为管理员
+        """
+        admin_users_str = os.getenv('ADMIN_USERS', 'admin')
+        admin_users = [u.strip() for u in admin_users_str.split(',') if u.strip()]
+        return username in admin_users
 
 
 # 全局用户管理器实例
