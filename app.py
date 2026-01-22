@@ -245,8 +245,8 @@ def render_sidebar():
                 st.session_state.current_result = None
                 st.session_state.history_list = []
                 # 清空密钥缓存，下次登录需重新输入
-                st.session_state.user_api_key = ''
-                st.session_state.api_key_valid = False
+                # st.session_state.user_api_key = ''
+                # st.session_state.api_key_valid = False
                 st.rerun()
         
         # 账户设置 (折叠)
@@ -263,14 +263,14 @@ def render_sidebar():
         # 2. 转录模式切换
         st.markdown('<div class="sidebar-section-header">转录设置</div>', unsafe_allow_html=True)
         
-        # 初始化转录模式 session state
+        # 初始化转录模式 session state（默认远程模式）
         if 'transcribe_mode' not in st.session_state:
-            st.session_state.transcribe_mode = 'local'
+            st.session_state.transcribe_mode = 'remote'
         
         transcribe_mode = st.radio(
             "🎤 语音转录模式",
             options=['local', 'remote'],
-            format_func=lambda x: '🖥️ 服务器 自建 Whisper（慢）' if x == 'local' else '☁️ 远程 API（快）',
+            format_func=lambda x: '🖥️ 服务器自建 免费Whisper（慢）' if x == 'local' else '☁️ 远程 API（快）',
             key='transcribe_mode_radio',
             index=0 if st.session_state.transcribe_mode == 'local' else 1,
             horizontal=True,
@@ -283,9 +283,16 @@ def render_sidebar():
         
         # 远程 API 密钥输入（当选择远程模式时显示）
         if transcribe_mode == 'remote':
-            # 初始化密钥 session state
+            # 初始化密钥 session state，优先从用户信息加载已保存的密钥
             if 'user_api_key' not in st.session_state:
-                st.session_state.user_api_key = ''
+                saved_key = user_manager.get_api_key(st.session_state.username)
+                st.session_state.user_api_key = saved_key if saved_key else ''
+                # 如果有保存的密钥，自动验证
+                if saved_key:
+                    result = api_key_manager.validate_key(saved_key, st.session_state.username)
+                    st.session_state.api_key_valid = result['valid']
+                else:
+                    st.session_state.api_key_valid = False
             if 'api_key_valid' not in st.session_state:
                 st.session_state.api_key_valid = False
             
@@ -308,7 +315,9 @@ def render_sidebar():
                     if result['valid']:
                         st.session_state.user_api_key = user_key
                         st.session_state.api_key_valid = True
-                        st.toast("✅ 密钥验证成功！", icon="✅")
+                        # 保存密钥到用户信息
+                        user_manager.save_api_key(st.session_state.username, user_key)
+                        st.toast("✅ 密钥验证成功并已保存！", icon="✅")
                     else:
                         st.session_state.api_key_valid = False
                         st.toast(f"❌ {result['message']}", icon="❌")
@@ -321,6 +330,8 @@ def render_sidebar():
                     st.success(f"✅ 密钥有效，到期: {expires_at if expires_at else '永久'}")
                 else:
                     st.session_state.api_key_valid = False
+                    # 密钥失效，清除保存的密钥
+                    user_manager.clear_api_key(st.session_state.username)
                     st.warning(f"⚠️ {result['message']}")
             elif user_key and not st.session_state.api_key_valid:
                 st.warning("⚠️ 请点击验证按钮验证密钥")
@@ -368,7 +379,7 @@ def render_sidebar():
                 if not all_keys:
                     st.info("暂无密钥")
                 else:
-                    for key_info in all_keys:
+                    for idx, key_info in enumerate(all_keys):
                         key = key_info.get('key', '')
                         name = key_info.get('name', '')
                         enabled = key_info.get('enabled', True)
@@ -396,15 +407,15 @@ def render_sidebar():
                             # 第二行：完整密钥（可复制）
                             st.code(key, language=None)
                             
-                            # 第三行：操作按钮
+                            # 第三行：操作按钮（使用索引确保 key 唯一）
                             col_toggle, col_del = st.columns(2)
                             with col_toggle:
                                 btn_label = "🔓 启用" if not enabled else "🔒 禁用"
-                                if st.button(btn_label, key=f"toggle_{key}", use_container_width=True):
+                                if st.button(btn_label, key=f"toggle_{idx}_{key}", use_container_width=True):
                                     api_key_manager.toggle_key(key)
                                     st.rerun()
                             with col_del:
-                                if st.button("🗑️ 删除", key=f"del_{key}", use_container_width=True):
+                                if st.button("🗑️ 删除", key=f"del_{idx}_{key}", use_container_width=True):
                                     api_key_manager.delete_key(key)
                                     st.rerun()
         

@@ -289,7 +289,51 @@ class UserManager:
         admin_users_str = os.getenv('ADMIN_USERS', 'admin')
         admin_users = [u.strip() for u in admin_users_str.split(',') if u.strip()]
         return username in admin_users
+    
+    def save_api_key(self, username: str, api_key: str):
+        """
+        保存用户的 API 密钥
+        
+        Args:
+            username: 用户名
+            api_key: API 密钥
+        """
+        username = self._sanitize_username(username)
+        users = self._load_users()
+        if username in users:
+            users[username]['api_key'] = api_key
+            self._save_users(users)
+    
+    def get_api_key(self, username: str) -> Optional[str]:
+        """
+        获取用户保存的 API 密钥
+        
+        Args:
+            username: 用户名
+            
+        Returns:
+            Optional[str]: API 密钥，如果未保存则返回 None
+        """
+        username = self._sanitize_username(username)
+        users = self._load_users()
+        if username in users:
+            return users[username].get('api_key')
+        return None
+    
+    def clear_api_key(self, username: str):
+        """
+        清除用户保存的 API 密钥
+        
+        Args:
+            username: 用户名
+        """
+        username = self._sanitize_username(username)
+        users = self._load_users()
+        if username in users and 'api_key' in users[username]:
+            del users[username]['api_key']
+            self._save_users(users)
 
 
 # 全局用户管理器实例
 user_manager = UserManager()
+
